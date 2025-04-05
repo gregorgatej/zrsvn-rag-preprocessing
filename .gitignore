@@ -3,3 +3,5 @@ readme.txt
 *.pyc
 *.png
 *.json
+.env
+__pycache__

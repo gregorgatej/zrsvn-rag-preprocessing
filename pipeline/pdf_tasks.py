@@ -23,12 +23,46 @@ from docling.datamodel.pipeline_options import (
 )
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
+# --- S3/MinIO related imports ---
+from minio import Minio
+from minio.error import S3Error
+from dotenv import load_dotenv
+
 _log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons"):
-    pdf_in_path = Path(pdf_in_path)
+def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed: set = None):
+    # Download PDFs from S3 into a local folder 'temp_input_pdfs'
+    load_dotenv()
+    s3_access_key = os.getenv("S3_ACCESS_KEY")
+    s3_secret_access_key = os.getenv("S3_SECRET_ACCESS_KEY")
+    s3_endpoint = "moja.shramba.arnes.si"
+    bucket_name = "zrsvn-rag"
+    client = Minio(
+        endpoint=s3_endpoint,
+        access_key=s3_access_key,
+        secret_key=s3_secret_access_key,
+        secure=True
+    )
+
+    temp_input_folder = Path("temp_input_pdfs")
+    temp_input_folder.mkdir(parents=True, exist_ok=True)
+
+    try:
+        objects = client.list_objects(bucket_name, recursive=True)
+        for obj in tqdm(objects, desc="Downloading PDFs from S3"):
+            if obj.object_name.lower().endswith(".pdf"):
+                local_file_path = temp_input_folder / obj.object_name
+                local_file_path.parent.mkdir(parents=True, exist_ok=True)
+                client.fget_object(bucket_name, obj.object_name, str(local_file_path))
+    except S3Error as e:
+        _log.error(f"S3 error: {e}")
+
+    # Now, use the downloaded PDFs in temp_input_pdfs as input.
+    pdf_in_path = temp_input_folder
+
+    # Ensure the output directory exists.
     json_out_path = Path(json_out_path)
     json_out_path.mkdir(parents=True, exist_ok=True)
 
@@ -52,13 +86,24 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons"):
 
     result_dict = {}
 
+    # List PDF files (from temp_input_pdfs) recursively
     pdf_files = (
         [pdf_in_path] if pdf_in_path.is_file()
         else list(pdf_in_path.rglob("*.pdf"))
     )
 
     for file in tqdm(pdf_files, desc="Parsing PDFs"):
-        pdf_dict_key = file.resolve().relative_to(Path.cwd()).as_posix()
+        # If the file is under temp_input_pdfs, get its path relative to that folder.
+        try:
+            pdf_dict_key = file.resolve().relative_to(temp_input_folder).as_posix()
+        except ValueError:
+            pdf_dict_key = file.resolve().relative_to(Path.cwd()).as_posix()
+
+        # SKIP already processed files
+        if already_processed and pdf_dict_key in already_processed:
+            _log.info(f"Skipping {pdf_dict_key}, already processed.")
+            continue
+
         hash_input = f"{file.resolve()}_{time.time()}"
         hash_suffix = hashlib.md5(hash_input.encode()).hexdigest()[:8]
         max_length = 150
@@ -86,7 +131,8 @@ def extract_data(
     parse_pdf_result_dict,
     base_dir=".",
     pics_and_tables_out_path="output_pics_and_tables",
-    json_out_path="output_json"
+    json_out_path="output_json",
+    already_processed: set = None
 ):
     os.makedirs(pics_and_tables_out_path, exist_ok=True)
     os.makedirs(json_out_path, exist_ok=True)
@@ -94,8 +140,10 @@ def extract_data(
     hash_suffix_map = {}
     max_filename_length = 150
 
+    # --- New: We'll also store the local paths of the extracted pics/tables ---
     def extract_pics_and_tables_helper(pdf_dict, base_dir, output_dir):
         item_bboxes = {}
+        item_local_paths = {}
         def process_items(items, item_type, doc, data, pdf_path, pdf_rel_path, hash_suffix):
             pdf_name = Path(pdf_path).stem
             for idx, item in enumerate(items):
@@ -134,7 +182,10 @@ def extract_data(
                     output_path = os.path.join(output_dir, output_filename)
                     cropped_img = img.crop(crop_box)
                     cropped_img.save(output_path)
+                    # Store bounding box info
                     item_bboxes[(pdf_rel_path, item_type, idx, page_no)] = (l, top_pdf, r, bottom_pdf)
+                    # Also store the local output path (as a string)
+                    item_local_paths[(pdf_rel_path, item_type, idx, page_no)] = output_path
         for pdf_rel_path, json_rel_path in tqdm(pdf_dict.items(), desc="Extracting pics/tables"):
             pdf_path = str(Path(base_dir, pdf_rel_path))
             json_path = str(Path(base_dir, json_rel_path))
@@ -147,12 +198,12 @@ def extract_data(
             process_items(data.get("tables", []), "table", doc, data, pdf_path, pdf_rel_path, hash_suffix)
             hash_suffix_map[pdf_rel_path] = hash_suffix
             doc.close()
-        return item_bboxes
+        return item_bboxes, item_local_paths
 
     def generate_id():
         return ''.join(random.choices(string.ascii_letters + string.digits, k=9))
 
-    def create_chunk_entry(ref_value, content_type, chunk_id, prov, section_id, section_header, text_value, bounding_box_override=None):
+    def create_chunk_entry(ref_value, content_type, chunk_id, prov, section_id, section_header, text_value, bounding_box_override=None, chunk_local_path=None):
         nr_chars = None
         if content_type == "paragraph":
             charspan = prov.get("charspan", [])
@@ -186,11 +237,13 @@ def extract_data(
             "text": text_value,
             "nrCharacters": nr_chars,
             "fileSeqPosition": None,
-            "sectionSeqPosition": None
+            "sectionSeqPosition": None,
+            "chunkLocalPath": chunk_local_path  # New key for local extracted image path (or null)
         }
         return chunk_dict
 
-    item_bboxes = extract_pics_and_tables_helper(
+    # Get both bounding box and local image paths for extracted items.
+    item_bboxes, item_local_paths = extract_pics_and_tables_helper(
         pdf_dict=parse_pdf_result_dict,
         base_dir=base_dir,
         output_dir=pics_and_tables_out_path
@@ -198,16 +251,21 @@ def extract_data(
     pdf_processed_json_map = {}
 
     for pdf_rel_path, input_json_rel_path in tqdm(parse_pdf_result_dict.items(), desc="Processing final JSONs"):
+        # SKIP already processed JSONs
+        if already_processed and pdf_rel_path in already_processed:
+            _log.info(f"Skipping {pdf_rel_path}, already processed.")
+            continue
         pdf_path = str(Path(base_dir, pdf_rel_path))
         json_path = str(Path(base_dir, input_json_rel_path))
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         file_name = data.get("origin", {}).get("filename", "unknown_file")
         file_type = file_name.split(".")[-1] if "." in file_name else "unknown"
+        # Instead of filePath, add s3Path using the pdf_rel_path (which is relative to temp_input_pdfs)
         output_json = {
             "fileType": file_type,
             "fileName": file_name,
-            "filePath": pdf_rel_path,
+            "fileS3Path": str(Path(pdf_rel_path).relative_to("temp_input_pdfs")),
             "documentPages": []
         }
         texts_dict = {}
@@ -265,6 +323,7 @@ def extract_data(
                     page_no = prov["page_no"]
                     if section_id:
                         section_map[section_id].add(page_no)
+                    # For paragraphs, chunkLocalPath remains null.
                     new_chunk = create_chunk_entry(
                         ref_value=ref_value,
                         content_type="paragraph",
@@ -282,6 +341,7 @@ def extract_data(
                     page_no = prov["page_no"]
                     bb_key = (pdf_rel_path, "picture", i, page_no)
                     bbox_override = item_bboxes.get(bb_key, None)
+                    local_path = item_local_paths.get(bb_key, None)
                     new_chunk = create_chunk_entry(
                         ref_value=ref_value,
                         content_type="picture",
@@ -290,7 +350,8 @@ def extract_data(
                         section_id=None,
                         section_header=None,
                         text_value=None,
-                        bounding_box_override=bbox_override
+                        bounding_box_override=bbox_override,
+                        chunk_local_path=local_path
                     )
                     final_chunks.append((page_no, new_chunk))
             elif label == "table":
@@ -300,6 +361,7 @@ def extract_data(
                     page_no = prov["page_no"]
                     bb_key = (pdf_rel_path, "table", i, page_no)
                     bbox_override = item_bboxes.get(bb_key, None)
+                    local_path = item_local_paths.get(bb_key, None)
                     new_chunk = create_chunk_entry(
                         ref_value=ref_value,
                         content_type="table",
@@ -308,7 +370,8 @@ def extract_data(
                         section_id=None,
                         section_header=None,
                         text_value=None,
-                        bounding_box_override=bbox_override
+                        bounding_box_override=bbox_override,
+                        chunk_local_path=local_path
                     )
                     final_chunks.append((page_no, new_chunk))
             for child_info in node.get("children", []):

@@ -4,7 +4,11 @@ readme.txt
 *.png
 *.json
 .env
-__pycache__
+__pycache__/
+intermediate_jsons/
+output_jsons/
+output_pics_and_tables/
+temp_input_pdfs/
 
 # Generic safeguard ignores
 

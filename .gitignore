@@ -61,4 +61,5 @@ venv/
 env/
 
 # Data
-.csv
+*.csv
+*.xlsx

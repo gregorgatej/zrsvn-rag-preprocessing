@@ -1,5 +1,5 @@
 from prefect import flow, task
-from pipeline.pdf_tasks import parse_pdf, extract_data
+from pipeline.phase1_generating_jsons_and_extracting_images_tasks import parse_pdf, extract_data
 from pathlib import Path
 import json
 import time
@@ -33,7 +33,7 @@ def save_progress(progress_file, new_files):
         json.dump(sorted(processed), f, indent=2)
 
 @flow
-def pdf_processing_flow(pdf_input_folder: str = "input_pdfs",
+def phase1_flow(pdf_input_folder: str = "input_pdfs",
                         intermediate_folder: str = "intermediate_jsons",
                         output_pics_folder: str = "output_pics_and_tables",
                         output_json_folder: str = "output_jsons",
@@ -45,5 +45,5 @@ def pdf_processing_flow(pdf_input_folder: str = "input_pdfs",
     return processed_json_map
 
 if __name__ == "__main__":
-    result = pdf_processing_flow()
+    result = phase1_flow()
     print("Final mapping of processed JSON files:", result)

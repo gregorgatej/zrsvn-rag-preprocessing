@@ -38,7 +38,7 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed
     s3_access_key = os.getenv("S3_ACCESS_KEY")
     s3_secret_access_key = os.getenv("S3_SECRET_ACCESS_KEY")
     s3_endpoint = "moja.shramba.arnes.si"
-    bucket_name = "zrsvn-rag"
+    bucket_name = "zrsvn-rag-najdbe"
     client = Minio(
         endpoint=s3_endpoint,
         access_key=s3_access_key,
@@ -72,7 +72,7 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed
     pipeline_options.do_table_structure = True
     pipeline_options.table_structure_options.do_cell_matching = True
     pipeline_options.accelerator_options = AcceleratorOptions(
-        num_threads=32, device=AcceleratorDevice.AUTO
+        num_threads=32, device=AcceleratorDevice.CPU # Instead of AUTO
     )
 
     doc_converter = DocumentConverter(
@@ -341,7 +341,7 @@ def extract_data(
                     page_no = prov["page_no"]
                     bb_key = (pdf_rel_path, "picture", i, page_no)
                     bbox_override = item_bboxes.get(bb_key, None)
-                    local_path = item_local_paths.get(bb_key, None)
+                    local_path = str(Path(item_local_paths.get(bb_key, None)).relative_to(base_dir))
                     new_chunk = create_chunk_entry(
                         ref_value=ref_value,
                         content_type="picture",
@@ -361,7 +361,7 @@ def extract_data(
                     page_no = prov["page_no"]
                     bb_key = (pdf_rel_path, "table", i, page_no)
                     bbox_override = item_bboxes.get(bb_key, None)
-                    local_path = item_local_paths.get(bb_key, None)
+                    local_path = str(Path(item_local_paths.get(bb_key, None)).relative_to(base_dir))
                     new_chunk = create_chunk_entry(
                         ref_value=ref_value,
                         content_type="table",

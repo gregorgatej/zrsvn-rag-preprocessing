@@ -24,7 +24,7 @@ def all_phases_flow(
     parse_progress: str = "parse_progress.json",
     extract_progress: str = "extract_progress.json",
     json_input_folder: str = "output_jsons",
-    metadata_xlsx_path: str = "./additional_metadata/test_vrst_in_virov.xlsx",
+    metadata_xlsx_path: str = "./additional_metadata/Seznam_vrst_in_virov_20241212.xlsx",
 ):
     # Phase 1
     phase1_flow(

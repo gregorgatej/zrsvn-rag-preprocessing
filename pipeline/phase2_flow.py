@@ -24,7 +24,7 @@ def run_update_metadata(xlsx_path: str):
 @flow
 def phase2_flow(
     json_input_folder: str = "output_jsons",
-    metadata_xlsx_path: str = "./additional_metadata/test_vrst_in_virov.xlsx"
+    metadata_xlsx_path: str = "./additional_metadata/Seznam_vrst_in_virov_20241212.xlsx"
 ):
     run_insert(json_input_folder)
     run_prepare_and_chunk()

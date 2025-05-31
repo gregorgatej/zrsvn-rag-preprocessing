@@ -46,7 +46,7 @@ def insert_file_and_sections(json_path: str):
     data = json.loads(Path(json_path).read_text(encoding="utf-8"))
 
     cur.execute(
-        "INSERT INTO files (type, filename, s3_key) VALUES (%s,%s,%s) RETURNING id",
+        "INSERT INTO files (type, filename, s3_key) VALUES (%s,%s,%s) ON CONFLICT (s3_key) DO NOTHING RETURNING id",
         (data["fileType"], data["fileName"], data["fileS3Path"])
     )
     file_id = cur.fetchone()[0]

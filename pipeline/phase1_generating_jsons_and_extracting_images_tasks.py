@@ -1,19 +1,28 @@
+# Delo z JSON.
 import json
+# Generiranje MD5 ali drugih zgoščenih vrednosti za unikatna imena.
 import hashlib
+# Beleženje informacij, opozoril in napak med izvajanjem.
 import logging
+# Merjenje časa, npr. za časovne žige in merjenje trajanja operacij.
 import time
+# Delo z datotečnimi potmi in preverjanje obstoja datotek.
 from pathlib import Path
+# Sistemske operacije, kot so ustvarjanje map.
 import os
+# Naključno generiranje, v našem primeru nizov znakov črk in števil. 
 import random
+# Dostop do niza črk in številk za ustvarjanje naključnih nizov.
 import string
+# Omogoča obravnavo "datotek", shranjenih v spominu"
 import io
+# Prikaz sprotnega napredka operacij.
 from tqdm import tqdm
-
-import fitz  # PyMuPDF
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
+# PyMuPDF: odpiranje in obdelava PDFjev.
+import fitz
+# Pillow: odpiranje, obdelava in shranjevanje slik (PNG, JPEG ipd.).
 from PIL import Image
-
+# Docling: pretvorba dokumentov v interne modele.
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import (
@@ -23,17 +32,39 @@ from docling.datamodel.pipeline_options import (
 )
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
-# --- S3/MinIO related imports ---
+# Klient za MinIO/S3 API.
 from minio import Minio
+# Ujemanje napak, ki jih vrže MinIO.
 from minio.error import S3Error
+# Nalaganje okoljskiih spremenljivk iz .env datoteke.
 from dotenv import load_dotenv
 
+# Nastavimo beležnik (ang. logger) za ta modul.
 _log = logging.getLogger(__name__)
+# V konzoli prikazujemo sporočila iz INFO ali višjega nivoja.
 logging.basicConfig(level=logging.INFO)
 
-
+# Funkcija, ki:
+# 1) Prenese vse PDF-je iz MinIO/S3 (bucket 'zrsvn-rag-najdbe')
+#    v lokalno mapo 'temp_input_pdfs'.
+# 2) Za vsak prenesen PDF pokliče Docling DocumentConverter 
+#    in ga pretvori v Docling model (tj. podatkovna struktura dostopna prek
+#    'conv_result.document', ki predstalja vsebino dokumenta).
+# 3) Model izvozi v obliki JSON datoteke v mapo 'intermediate_jsons'.
+# 4) Vrne slovar, ki za vsako relativno pot do PDF-ja 
+#    prikaže relativno pot do ustvarjenega JSON-a.
 def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed: set = None):
-    # Download PDFs from S3 into a local folder 'temp_input_pdfs'
+    """
+    Function that:
+    1) Downloads all PDFs from MinIO/S3 (bucket 'zrsvn-rag-najdbe')
+       into the local folder 'temp_input_pdfs'.
+    2) For each downloaded PDF, calls the Docling DocumentConverter
+       and converts it into a Docling model (i.e., a data structure accessible via
+       'conv_result.document' that represents the content of the document).
+    3) Exports the model as a JSON file into the folder 'intermediate_jsons'.
+    4) Returns a dictionary mapping each PDF's relative path
+       to the relative path of the created JSON file.
+    """
     load_dotenv()
     s3_access_key = os.getenv("S3_ACCESS_KEY")
     s3_secret_access_key = os.getenv("S3_SECRET_ACCESS_KEY")
@@ -46,35 +77,41 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed
         secure=True
     )
 
+    # # Ustvarimo (če še ne obstaja) mapo za prenesene PDFje.
     temp_input_folder = Path("temp_input_pdfs")
     temp_input_folder.mkdir(parents=True, exist_ok=True)
 
     try:
+        # Pridobimo seznam vseh objektov v S3 vedru (ang. bucketu).
         objects = client.list_objects(bucket_name, recursive=True)
+        # Prenesemo vsak PDF, pri čemer sproti prek tqdm prikazujemo napredek.
         for obj in tqdm(objects, desc="Downloading PDFs from S3"):
+            # Prenašamo samo PDFje.
             if obj.object_name.lower().endswith(".pdf"):
                 local_file_path = temp_input_folder / obj.object_name
+                # Če vedro vsebuje podmape jih ustvarimo tudi na disku.
                 local_file_path.parent.mkdir(parents=True, exist_ok=True)
                 client.fget_object(bucket_name, obj.object_name, str(local_file_path))
     except S3Error as e:
         _log.error(f"S3 error: {e}")
 
-    # Now, use the downloaded PDFs in temp_input_pdfs as input.
     pdf_in_path = temp_input_folder
 
-    # Ensure the output directory exists.
+     # Prepričamo se, da mapa za JSON izhod obstaja.
     json_out_path = Path(json_out_path)
     json_out_path.mkdir(parents=True, exist_ok=True)
 
-    # Setup Docling pipeline options
+    # Nastavimo parametre za Docling PDF pretvorbo.
     pipeline_options = PdfPipelineOptions()
+    # Ne izvajamo optičnega prepoznavanja znakov.
     pipeline_options.do_ocr = False
+    # Želimo prepoznati strukturo tabel.
     pipeline_options.do_table_structure = True
     pipeline_options.table_structure_options.do_cell_matching = True
     pipeline_options.accelerator_options = AcceleratorOptions(
-        num_threads=32, device=AcceleratorDevice.CPU # Instead of AUTO
+        num_threads=32, device=AcceleratorDevice.CPU
     )
-
+    # Inicializiramo DocumentConverter za PDF s PyPdfium zalednim delom.
     doc_converter = DocumentConverter(
         format_options={
             InputFormat.PDF: PdfFormatOption(
@@ -84,26 +121,37 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed
         }
     )
 
+    # Ta slovar bomo napolnili s ključem=relativna pot do PDF, 
+    # vrednost=relativna pot do JSON.
     result_dict = {}
 
-    # List PDF files (from temp_input_pdfs) recursively
+    # Poiščemo vse PDF datoteke (rekurzivno) v temp_input_folder.
+    # Zagotovimo, da je pdf_files vedno seznam poti do PDF-jev, bodisi:
+    # - en element, če se pod pdf_in_path nahaja ena datoteka,
+    # - seznam vseh PDF datotek, če se pod pdf_in_path nahaja mapa.
     pdf_files = (
         [pdf_in_path] if pdf_in_path.is_file()
         else list(pdf_in_path.rglob("*.pdf"))
     )
 
     for file in tqdm(pdf_files, desc="Parsing PDFs"):
-        # If the file is under temp_input_pdfs, get its path relative to that folder.
+        # Če se datoteka nahaja znotraj poti navedene pod temp_input_pdfs, 
+        # pridobimo relativno pot, ki je vezana na slednjo.
         try:
             pdf_dict_key = file.resolve().relative_to(temp_input_folder).as_posix()
+        # TODO Če datoteka ni pod temp_input_pdfs bo vseeno obdelana,
+        # tega pa nočemo.
+        # Če datoteka ni neposredno v temp_input_folder uporabimo absolutno
+        # pot glede na trenutno mapo.
         except ValueError:
             pdf_dict_key = file.resolve().relative_to(Path.cwd()).as_posix()
 
-        # SKIP already processed files
+        # Že obdelane datoteke preskočimo.
         if already_processed and pdf_dict_key in already_processed:
             _log.info(f"Skipping {pdf_dict_key}, already processed.")
             continue
 
+        # Kreiramo unikatno ime JSON datoteke, ki vsebuje MD5 zgoščeno vrednost.
         hash_input = f"{file.resolve()}_{time.time()}"
         hash_suffix = hashlib.md5(hash_input.encode()).hexdigest()[:8]
         max_length = 150
@@ -119,6 +167,7 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed
         elapsed_time = time.time() - start_time
         _log.info(f"Converted in {elapsed_time:.2f} seconds.")
 
+        # Model, izvožen v obliki slovarja, shranimo kot JSON.
         with output_path.open("w", encoding="utf-8") as fp:
             fp.write(json.dumps(conv_result.document.export_to_dict()))
 
@@ -126,7 +175,15 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed
 
     return result_dict
 
-
+# Funkcija, ki:
+# 1) Za vsako JSON datoteko (rezultat parse_pdf) prebere podatke.
+# 2) Iz podatkov 'pictures' in 'tables' izreže ustrezne slike s strani PDFja.
+# 3) Shrani izrezane slike v mapo pics_and_tables_out_path.
+# 4) Iz celotnega nabora besedil, slik in tabel oblikuje končne besedilne enote
+#    oz. 'chunk' objekte, jih razporedi po straneh in doda metapodatke.
+# 5) Shrani končne JSON datoteke v mapo json_out_path.
+# 6) Vrne slovar, ki povezuje relativno pot do PDFja z relativno potjo do 
+# končnega JSONa.
 def extract_data(
     parse_pdf_result_dict,
     base_dir=".",
@@ -134,29 +191,102 @@ def extract_data(
     json_out_path="output_json",
     already_processed: set = None
 ):
+    """
+    Function that:
+    1) Reads data from each JSON file (result of parse_pdf).
+    2) Extracts relevant images from the 'pictures' and 'tables' data 
+       in the PDF.
+    3) Saves the extracted images into the folder pics_and_tables_out_path.
+    4) Creates final text units, or 'chunk' objects, from the full set of 
+       texts, images, and tables,
+       arranges them by pages, and adds metadata.
+    5) Saves the final JSON files into the folder json_out_path.
+    6) Returns a dictionary mapping the relative path of the PDF to the 
+       relative path of the final JSON.
+    """
+
+    # Poskrbimo, da izhodne mape obstajajo.
     os.makedirs(pics_and_tables_out_path, exist_ok=True)
     os.makedirs(json_out_path, exist_ok=True)
 
+    # Za vsako PDF pot shranimo ustrezno zgoščeno vrednost (ang. hash) za imena.
     hash_suffix_map = {}
+    # Omejitev dolžine imena, za v izogib omejitvam datotečnih sistemov.
     max_filename_length = 150
 
-    # --- New: We'll also store the local paths of the extracted pics/tables ---
+    # Pomožna funkcija za izrez slik:
+    # - Za vsako referenco v pdf_dict nastavi (ključ = pot do PDF, 
+    #                                          vrednost = pot do intermediate JSON).
+    # - Odpre JSON, pridobi seznam slik in tabel (item.get("pictures"), 
+    #                                             item.get("tables")).
+    # - Za vsak element poišče robni okvir (ang. bounding box), 
+    #   pri čemer upošteva tudi ostale z njim povezane, t.i. 'children' elemente,
+    #   prek katerih razpotegne robni okvir.
+    # - Izreže ustrezen del strani v slikovni obliki in ga hrani kot ločeno PNG 
+    #   datoteko.
+    # - V slovar item_bboxes shrani koordinate robnih okvirjev (ki zajemajo prostor,
+    #   ki ga zaseda tako glavni element kot tisti, ki so z njim povezani).
+    # - V slovar item_local_paths shrani lokalno pot do izrezane slike.
     def extract_pics_and_tables_helper(pdf_dict, base_dir, output_dir):
+        """
+        Helper function for cropping images:
+        - For each reference in pdf_dict, sets (key = path to PDF,
+                                               value = path to intermediate JSON).
+        - Opens the JSON and retrieves the list of images and tables (item.get("pictures"),
+                                                                      item.get("tables")).
+        - For each item, finds the bounding box,
+          taking into account related 'children' elements,
+          expanding the bounding box to include them.
+        - Crops the appropriate part of the page as an image and saves it as a 
+          separate PNG file.
+        - Stores the bounding box coordinates (covering the area occupied by
+          both the main element and its related children) in the item_bboxes 
+          dictionary.
+        - Stores the local path to the cropped image in the item_local_paths 
+          dictionary.
+        """
+        # Ključ: (pdf_rel_path, tip, indeks, številka strani).
+        # Vrednost: Koordinate robnega okvirja.
         item_bboxes = {}
+        # Ključ: Isti kot zgoraj, tj. (pdf_rel_path, tip, indeks, številka strani).
+        # Vrednost: Pot do slike, ki je bila shranjena na disk.
         item_local_paths = {}
+        # Za vsak element (sliko ali tabelo) v 'items' (JSON strukturi):
+        # - Poiščemo robni okvir.
+        # - Če ima element "otroke" ($ref -> '#/texts/...'), razširimo robni okvir, 
+        #   da zajamemo tudi morebitno pripadajoče besedilo.
+        # - Preračunamo koordinate iz PDF točk v piksle (množitelj dpi_scale=2).
+        # - Izrežemo del slike (crop) in ga shranimo kot PNG.
+        # - Zabeležimo koordinate robnega okvirja in lokalno pot v slovarja.
         def process_items(items, item_type, doc, data, pdf_path, pdf_rel_path, hash_suffix):
+            """
+            For each item (picture or table) in 'items' (JSON structure):
+            - Find the bounding box.
+            - If the item has "children" ($ref -> '#/texts/...'), expand the bounding box
+              to also include any associated text.
+            - Convert coordinates from PDF points to pixels (scale factor dpi_scale=2).
+            - Crop the image portion and save it as a PNG file.
+            - Record the bounding box coordinates and the local path in dictionaries.
+            """
+            # Ime PDFja brez .pdf končnice.
             pdf_name = Path(pdf_path).stem
             for idx, item in enumerate(items):
+                # 'prov' vsebuje informacije o lokaciji elementa (page_no, bbox).
                 for prov in item.get("prov", []):
                     page_no = prov["page_no"]
                     page_index = page_no - 1
+                    # Naložimo stran kot fitz Page objekt.
                     page = doc[page_index]
                     page_width = page.rect.width
                     page_height = page.rect.height
+                    # Stran zrenderiramo v višji, dvakratni resoluciji.
                     pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                     # pixmap pretvorimo v PIL sliko.
                     img = Image.open(io.BytesIO(pix.tobytes("png")))
+                    # Zberemo vse x in y koordinate robnega okvirja.
                     all_x = [prov["bbox"]["l"], prov["bbox"]["r"]]
                     all_y = [prov["bbox"]["t"], prov["bbox"]["b"]]
+                    # Če ima element 'otroke', razširimo robni okvir, da zajame tudi te, tj. besedilo.
                     for child in item.get("children", []):
                         if "$ref" in child and child["$ref"].startswith("#/texts/"):
                             text_id = int(child["$ref"].split("/")[-1])
@@ -165,14 +295,18 @@ def extract_data(
                                 if text_prov["page_no"] == page_no:
                                     all_x.extend([text_prov["bbox"]["l"], text_prov["bbox"]["r"]])
                                     all_y.extend([text_prov["bbox"]["t"], text_prov["bbox"]["b"]])
+                    # Najdemo skrajne koordinate robnega okvirja (izražene v PDF točkah).
                     l, r = min(all_x), max(all_x)
                     bottom_pdf, top_pdf = min(all_y), max(all_y)
+                    # Pretvorimo jih v piksle.
                     dpi_scale = 2
                     l_px = int(l * dpi_scale)
                     r_px = int(r * dpi_scale)
+                    # Pri y koordinatah upoštevamo obratno koordinatno izhodišče.
                     t_px = int((page_height - top_pdf) * dpi_scale)
                     b_px = int((page_height - bottom_pdf) * dpi_scale)
                     crop_box = (l_px, t_px, r_px, b_px)
+                    # Sestavimo ime izrezane slike glede na tip (picture/table) in indeks elementa.
                     if item_type == "picture":
                         suffix_part = f"_pic{idx+1}_pg{page_no}_{hash_suffix}.png"
                     else:
@@ -180,36 +314,114 @@ def extract_data(
                     base_stem = pdf_name[: max_filename_length - len(suffix_part)]
                     output_filename = f"{base_stem}{suffix_part}"
                     output_path = os.path.join(output_dir, output_filename)
+                    # Izrežemo (crop) sliko in jo shranimo v datoteko.
                     cropped_img = img.crop(crop_box)
                     cropped_img.save(output_path)
-                    # Store bounding box info
+                    # Shranimo robni okvir (v PDF točkah) v slovar.
                     item_bboxes[(pdf_rel_path, item_type, idx, page_no)] = (l, top_pdf, r, bottom_pdf)
-                    # Also store the local output path (as a string)
+                    # Shranimo pot do lokalno shranjene slike v slovar.
                     item_local_paths[(pdf_rel_path, item_type, idx, page_no)] = output_path
+
+        # Glavna zanka: gremo čez vsak PDF in pripadajoči JSON.
         for pdf_rel_path, json_rel_path in tqdm(pdf_dict.items(), desc="Extracting pics/tables"):
             pdf_path = str(Path(base_dir, pdf_rel_path))
             json_path = str(Path(base_dir, json_rel_path))
+            # Preberemo 'vmesni' JSON (rezultat od parse_pdf).
             with open(json_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+            # Odpremo PDF datoteko kot fitz dokument.
             doc = fitz.open(pdf_path)
+            # Generiramo zgoščeno vrednost za ta PDF.
             hash_input = f"{Path(pdf_path).resolve()}_{time.time()}"
             hash_suffix = hashlib.md5(hash_input.encode()).hexdigest()[:8]
+            # Izrežemo slike iz "pictures" in tabele iz "tables".
             process_items(data.get("pictures", []), "picture", doc, data, pdf_path, pdf_rel_path, hash_suffix)
             process_items(data.get("tables", []), "table", doc, data, pdf_path, pdf_rel_path, hash_suffix)
+            # Shranimo zgoščeno vrednost, da jo lahko kasneje uporabimo pri poimenovanju JSONov.
             hash_suffix_map[pdf_rel_path] = hash_suffix
             doc.close()
         return item_bboxes, item_local_paths
 
+    # Ustvari naključen niz (ID) dolžine 9 znakov, sestavljen iz velikih in malih črk ter številk.
+    # - random.choices izbere naključnih 'k' znakov iz niza (ascii_letters + digits).
+    # - ''.join(...): združi izbrane znake v en niz.
     def generate_id():
+        """
+        Generates a random string (ID) of length 9, composed of uppercase and lowercase letters and digits.
+        - random.choices selects 'k' random characters from the string (ascii_letters + digits).
+        - ''.join(...): concatenates the selected characters into a single string.
+        """
         return ''.join(random.choices(string.ascii_letters + string.digits, k=9))
 
+    # Ustvari slovar (chunk_dict) z vsemi relevantnimi podatki, ki se tičejo posameznega PDF elementa oz. 'chunk'-a:
+    # - ref: referenca na izvorni JSON element (npr. "#/texts/3").
+    # - boundingBox: seznam z enim slovarjem, ki vsebuje koordinate (l,t,r,b) in izvor koordinat.
+    # - chunkID: enolični ID elementa (npr. "aB3kLm9Nz").
+    # - contentType: seznam z enim elementom (npr. ["paragraph"], ["picture"], ["table"]).
+    # - sectionPages: prazen seznam, ki se napolni kasneje.
+    # - sectionID: ID sekcije, če element pripada kakšni sekciji.
+    # - sectionHeader: besedilo naslova sekcije, če naslov obstaja.
+    # - text: besedilo odstavka ali None, če gre za sliko/tabelo.
+    # - nrCharacters: število znakov v odstavku (če contentType == "paragraph", sicer None).
+    # - fileSeqPosition: pozicija elementa v celotnem dokumentu (se določi kasneje).
+    # - sectionSeqPosition: pozicija elementa znotraj sekcije (se določi kasneje).
+    # - chunkLocalPath: lokalna pot do izrezane slike (za slike/tabele) ali None.
+    # Parametri:
+    # - ref_value (str): referenca na izvorni JSON element (npr. "#/texts/3").
+    # - content_type (str): en izmed 'paragraph', 'picture', 'table'.
+    # - chunk_id (str): enolični ID, ustvarjen z generate_id().
+    # - prov (dict): slovar z informacijami o elementu: {"page_no": int, "bbox": {...}, "charspan": [...]}.
+    # - section_id (str ali None): ID sekcije, če obstaja.
+    # - section_header (str ali None): besedilo naslova sekcije, če obstaja.
+    # - text_value (str ali None): besedilo (če gre za odstavek).
+    # - bounding_box_override (tuple ali None): koordinate robnega okvirja v PDF točkah (l, top, r, bottom).
+    #   Ko obdelujemo slike in tabele (label == "picture" ali "table"), iz item_bboxes pridobimo
+    #   razširjeni bounding box, če je ta podan. Če ni podan (tj. če je None) koordinate pridobimo privzete koordinate
+    #   robnega okvirja prek prov["bbox"].
+    # - chunk_local_path (str ali None): lokalna pot do izrezane slike (če je element tipa "picture" ali "table").
+    # Vrne:
+    # - chunk_dict (dict): slovar z vsemi zgoraj navedenimi ključi in vrednostmi.
     def create_chunk_entry(ref_value, content_type, chunk_id, prov, section_id, section_header, text_value, bounding_box_override=None, chunk_local_path=None):
+        """
+        Creates a dictionary (chunk_dict) containing all relevant data related to a specific PDF element or 'chunk':
+        - ref: reference to the original JSON element (e.g., "#/texts/3").
+        - boundingBox: a list with a single dictionary containing coordinates (l, t, r, b) and the coordinate origin.
+        - chunkID: unique ID of the element (e.g., "aB3kLm9Nz").
+        - contentType: a list with a single element (e.g., ["paragraph"], ["picture"], ["table"]).
+        - sectionPages: an empty list to be filled later.
+        - sectionID: ID of the section if the element belongs to a section.
+        - sectionHeader: text of the section header if it exists.
+        - text: paragraph text or None if it is a picture/table.
+        - nrCharacters: number of characters in the paragraph (if contentType == "paragraph", otherwise None).
+        - fileSeqPosition: position of the element within the entire document (set later).
+        - sectionSeqPosition: position of the element within the section (set later).
+        - chunkLocalPath: local path to the cropped image (for pictures/tables) or None.
+        Parameters:
+        - ref_value (str): reference to the original JSON element (e.g., "#/texts/3").
+        - content_type (str): one of 'paragraph', 'picture', 'table'.
+        - chunk_id (str): unique ID generated by generate_id().
+        - prov (dict): dictionary with element information: {"page_no": int, "bbox": {...}, "charspan": [...]}.
+        - section_id (str or None): section ID if it exists.
+        - section_header (str or None): text of the section header if it exists.
+        - text_value (str or None): text content (if paragraph).
+        - bounding_box_override (tuple or None): bounding box coordinates in PDF points (l, top, r, bottom).
+        When processing pictures and tables (label == "picture" or "table"), the extended bounding box is retrieved 
+        from item_bboxes if provided.
+        If not provided (i.e., None), the bounding box coordinates are taken from the default prov["bbox"].
+        - chunk_local_path (str or None): local path to the cropped image (if element is of type "picture" or "table").
+        Returns:
+        - chunk_dict (dict): dictionary containing all the keys and values described above.
+        """
         nr_chars = None
+        # Če je chunk tipa odstavek, pridobimo charspan.
         if content_type == "paragraph":
             charspan = prov.get("charspan", [])
             if len(charspan) > 1:
+                # Druga vrednost charspana nam da skupno število znakov.
                 nr_chars = charspan[1]
+        # Pripravimo bounding_box_list, bodisi iz bounding_box_override, bodisi iz prov["bbox"].
         if bounding_box_override is not None:
+            # bounding_box_override je nabor vrednosti (l_pdf, top_pdf, r_pdf, bottom_pdf), izraženih v PDF točkah.
             (l_pdf, top_pdf, r_pdf, bottom_pdf) = bounding_box_override
             bounding_box_list = [{
                 "l": float(l_pdf),
@@ -219,6 +431,7 @@ def extract_data(
                 "coord_origin": "BOTTOMLEFT"
             }]
         else:
+            # Uporabimo bbox vrednosti iz prov.
             bounding_box_list = [{
                 "l": prov["bbox"]["l"],
                 "t": prov["bbox"]["t"],
@@ -226,6 +439,7 @@ def extract_data(
                 "b": prov["bbox"]["b"],
                 "coord_origin": "BOTTOMLEFT"
             }]
+        # Sestavimo slovar z vsemi vrednostmi.
         chunk_dict = {
             "ref": ref_value,
             "boundingBox": bounding_box_list,
@@ -238,36 +452,43 @@ def extract_data(
             "nrCharacters": nr_chars,
             "fileSeqPosition": None,
             "sectionSeqPosition": None,
-            "chunkLocalPath": chunk_local_path  # New key for local extracted image path (or null)
+            "chunkLocalPath": chunk_local_path
         }
         return chunk_dict
 
-    # Get both bounding box and local image paths for extracted items.
+    # Pridobimo slovarja item_bboxes in item_local_paths.
     item_bboxes, item_local_paths = extract_pics_and_tables_helper(
         pdf_dict=parse_pdf_result_dict,
         base_dir=base_dir,
         output_dir=pics_and_tables_out_path
     )
+    
+    #Pripravimo slovar, ki bo mapiral relativne poti vhodnih PDFov z relativnimi potmi izhodnih JSONov.
     pdf_processed_json_map = {}
 
     for pdf_rel_path, input_json_rel_path in tqdm(parse_pdf_result_dict.items(), desc="Processing final JSONs"):
-        # SKIP already processed JSONs
+        # Že obdelane PDFe preskočimo.
         if already_processed and pdf_rel_path in already_processed:
             _log.info(f"Skipping {pdf_rel_path}, already processed.")
             continue
+        # TODO pdf_path lahko tu verjetno pobrišemo.
         pdf_path = str(Path(base_dir, pdf_rel_path))
         json_path = str(Path(base_dir, input_json_rel_path))
+        # Preberemo vmesni JSON.
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+        # Pridobimo ime datoteke in njen tip.
         file_name = data.get("origin", {}).get("filename", "unknown_file")
         file_type = file_name.split(".")[-1] if "." in file_name else "unknown"
-        # Instead of filePath, add s3Path using the pdf_rel_path (which is relative to temp_input_pdfs)
+        # Definiramo strukturo končnega JSON dokumenta.
         output_json = {
             "fileType": file_type,
             "fileName": file_name,
             "fileS3Path": str(Path(pdf_rel_path).relative_to("temp_input_pdfs")),
+            # Tu kasneje dodamo vse podatke strani posamezne datoteke.
             "documentPages": []
         }
+        # Zgradimo slovarje referenc za lažje iskanje znotraj posameznega sklopa.
         texts_dict = {}
         for i, txt in enumerate(data.get("texts", [])):
             ref_key = f"#/texts/{i}"
@@ -284,12 +505,30 @@ def extract_data(
         for i, grp in enumerate(data.get("groups", [])):
             ref_key = f"#/groups/{i}"
             groups_dict[ref_key] = grp
+        # Slovar za povezovanje IDja posamezne sekcije (sectionID) z množico strani, ki v njo spadajo.
         section_map = {}
+        # Za hranjenje trenutno aktivne sekcije.
         current_section = None
+        # Slovar, ki povezuje ID sekcije z naslovom sekcije.
         section_headers = {}
+        # Seznam v katerega bomo shranili zbrane podatke posameznih elementov PDFa.
         final_chunks = []
 
+        # Rekurzivna funkcija, ki:
+        # - Pridobi referenco (npr. "#/texts/123") in ugotovi ali gre za besedilo, sliko, tabelo ali skupino.
+        # - Če gre za 'section_header' ustvari novo sekcijo.
+        # - Če gre za besedilo ('text' ali 'list_item') doda v final_chunks podatke o danem elementu PDFa (chunka);
+        #   Če gre za sliko ali tabelo doda med podatke še koordinate robnega okvirja in lokalno pot do slike.
+        # - Na koncu pokliče sebe za vse potomce (children) znotraj strukture JSON dokumenta.
         def traverse_node(ref_value):
+            """
+            Recursive function that:
+            - Takes a reference (e.g., "#/texts/123") and determines whether it refers to text, picture, table, or group.
+            - If it is a 'section_header', creates a new section.
+            - If it is text ('text' or 'list_item'), adds data about the given PDF element (chunk) to final_chunks;
+              if it is a picture or table, also adds bounding box coordinates and the local path to the image.
+            - Finally, calls itself recursively for all children within the JSON document structure.
+            """
             nonlocal current_section
             if ref_value in texts_dict:
                 node = texts_dict[ref_value]
@@ -303,6 +542,7 @@ def extract_data(
                 return
             label = node.get("label", "")
             content_layer = node.get("content_layer", "")
+            # Preskočimo neuproabno vsebino.
             if content_layer == "furniture":
                 return
             if label == "section_header":
@@ -323,7 +563,7 @@ def extract_data(
                     page_no = prov["page_no"]
                     if section_id:
                         section_map[section_id].add(page_no)
-                    # For paragraphs, chunkLocalPath remains null.
+                    # Za odstavke chunkLocalPath ostane null.
                     new_chunk = create_chunk_entry(
                         ref_value=ref_value,
                         content_type="paragraph",
@@ -374,16 +614,19 @@ def extract_data(
                         chunk_local_path=local_path
                     )
                     final_chunks.append((page_no, new_chunk))
+            # Rekurzivno obdelamo vse potomce (children).
             for child_info in node.get("children", []):
                 child_ref = child_info.get("$ref", "")
                 traverse_node(child_ref)
 
+        # Prva faza: prehodimo vse otroke korenskega 'body' vozlišča.
         body = data.get("body", {})
         body_children = body.get("children", [])
         for child in body_children:
             child_ref = child.get("$ref", "")
             traverse_node(child_ref)
 
+        # Druga faza: razporejanje slik in tabel v sekcije (če nimajo sekcije določene že od prej).
         last_text_section = None
         last_text_section_header = None
         no_section_pages = set()
@@ -405,10 +648,12 @@ def extract_data(
                 else:
                     no_section_pages.add(page_no)
 
+        # Mapiramo sekcije s seznami strani.
         section_page_map = {}
         for sec_id, pages_set in section_map.items():
             section_page_map[sec_id] = sorted(pages_set)
 
+        # Tretja faza: vsakemu chunku oz. elementu iz final_chunks napolnimo vsebino od 'sectionPages'.
         for i, (page_no, chunk) in enumerate(final_chunks):
             sec_id = chunk["sectionID"]
             if sec_id:
@@ -416,6 +661,8 @@ def extract_data(
             else:
                 chunk["sectionPages"] = sorted(no_section_pages)
 
+        # Določimo zaporedno pozicijo, ki jo chunk zaseda znotraj celotne PDF datoteke in zaporedno
+        # pozicijo, ki jo zaseda znotraj sekcije.
         file_seq = 1
         section_counters = {}
         for page_no, chunk in final_chunks:
@@ -428,6 +675,7 @@ def extract_data(
                 section_counters[sec_id] += 1
             chunk["sectionSeqPosition"] = section_counters[sec_id]
 
+        # Četrta faza: podatke združimo po straneh (pageNumber -> seznam chunkov).
         page_data = {}
         for page_no, chunk in final_chunks:
             if page_no not in page_data:
@@ -437,10 +685,12 @@ def extract_data(
                 }
             page_data[page_no]["chunks"].append(chunk)
 
+        # Strani sortiramo in jih vstavimo v končni slovar.
         sorted_page_numbers = sorted(page_data.keys())
         output_pages = [page_data[pn] for pn in sorted_page_numbers]
         output_json["documentPages"] = output_pages
 
+        # Sestavimo ime končne JSON datoteke.
         json_file_name = os.path.basename(json_path)
         hash_suffix = hash_suffix_map.get(pdf_rel_path, "00000000")
         json_name = Path(json_file_name).stem
@@ -450,6 +700,7 @@ def extract_data(
         output_filename = f"{base_stem_trimmed}{suffix_part}"
         output_json_path = Path(json_out_path) / output_filename
 
+        # Končni slovar shranimo v JSON datoteko.
         with open(output_json_path, "w", encoding="utf-8") as f:
             json.dump(output_json, f, ensure_ascii=False, indent=2)
 
@@ -457,3 +708,21 @@ def extract_data(
         pdf_processed_json_map[pdf_rel_path] = str(output_json_path)
 
     return pdf_processed_json_map
+
+# === TODO komentarji s predlogami za optimizacijo ===
+
+#    Prenos PDF-jev iz S3:
+#    - TODO: trenutno prenesemo vse PDF-je, kar je lahko zelo počasno in potroši veliko prostora,
+#      če je bucket velik. Predlagana optimizacija je filtriranje ali vzdrževanje seznama novih/neobdelanih
+#      PDF-jev že na strežniku (namesto da jih sinhrono prenesemo vse). 
+#      Lahko bi hranili datoteko ali bazo, ki označuje, kateri objekti so že procesirani.
+
+#    extract_pics_and_tables_helper:
+#    - TODO: Renderiranje vsake strani s fitz.get_pixmap za vsako sliko ali tabelo ponovno nariše celotno stran.
+#       Namesto tega lahko predhodno shranimo eno pixmap sliko strani in jo uporabimo za vse elemente na tej strani,
+#       kar zmanjša število klicev render. 
+#    - TODO: Shrani vsako izrezano sliko v ločeno datoteko, kar lahko povzroči veliko I/O operacij.
+#       Predlagamo uporabo batch pisanja ali omejitev hkratnih zapisov, recimo z uporabo ThreadPoolExecutor.
+
+#    - TODO: Razmisliti o asinhroni ali večnitni obdelavi izrezov slik, da se zmanjša čakanje na I/O.
+#    - TODO: Namesto rekurzivnega traverse_node preučiti iterativen algoritem ali generatorje, če so podatki zelo globoki.

@@ -1,10 +1,14 @@
 from prefect import flow, task
+# Uvoz funkcije, ki naloži embedding model, prebere vsebino (text_chunks, opise slik, opise tabel) 
+# iz baze, izračuna njene vektorske reprezentacije in jih vstavi v tabelo embeddings.
 from pipeline.phase4_generating_embeddings_tasks import generate_and_store_embeddings
 
+# Prefect naloga, ki kliče funkcijo generate_and_store_embeddings().
 @task(retries=3, retry_delay_seconds=2)
 def run_generate_embeddings():
     generate_and_store_embeddings()
 
+# Definicija podatkovnega toka za četrto fazo predprocesiranja: generiranje vložitev.
 @flow
 def phase4_flow():
     run_generate_embeddings()

@@ -1,7 +1,6 @@
 # Prefect: Orodje za definiranje podatkovnih tokov (flows) in nalog (tasks).
 # Za zaporedni zagon vseh štirih faz predprocesiranja PDF datotek.
 from prefect import flow
-
 # Uvoz posameznih faz, ki so ovite v Prefect funkcije podatkovnih tokov.
 # Faza 1: Razčlenjevanje PDFjev in generiranje JSONov.
 from pipeline.phase1_flow import phase1_flow

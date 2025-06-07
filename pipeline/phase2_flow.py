@@ -1,5 +1,4 @@
 from pathlib import Path
-
 from prefect import flow, task
 # Uvozimo relevantne funkcije iz phase2.
 from pipeline.phase2_preprocessing_and_inserting_json_data_into_db_tasks import (

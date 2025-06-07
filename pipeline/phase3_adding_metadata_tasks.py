@@ -1,23 +1,22 @@
 import os
 from datetime import timedelta
+# Kodiranje binarnih vsebin (slik) v niz, primeren za prenos prek protokolov, ki podpirajo le besedilo.
 import base64
 import requests
-
+# Formatiranje vhodnih podatkov LLMu v strukturirano obliko.
 import instructor
+# Pomožni modul za integracijo z OpenAI klientom.
 import instructor.patch
-import openai
 from openai import AzureOpenAI
 from minio import Minio
 from minio.error import S3Error
 import psycopg2
-from psycopg2.extensions import register_adapter, AsIs
-from pgvector.psycopg2 import register_vector
 from dotenv import load_dotenv
 from typing import Annotated, Optional, List
+# Tipi za Pydantic modele.
 from pydantic import BaseModel, Field, AfterValidator
 from transformers import AutoTokenizer
 
-# ─── CONFIG ────────────────────────────────────────────────────────────────────
 load_dotenv()
 
 DB_PARAMS = {
@@ -29,7 +28,7 @@ DB_PARAMS = {
     "options":  "-c search_path=rag_najdbe"
 }
 
-# Azure OpenAI client
+# Azure OpenAI klient.
 endpoint         = os.getenv("ZRSVN_AZURE_OPENAI_ENDPOINT")
 subscription_key = os.getenv("ZRSVN_AZURE_OPENAI_KEY")
 api_version      = "2024-12-01-preview"
@@ -38,9 +37,9 @@ client = AzureOpenAI(
     azure_endpoint=endpoint,
     api_key=subscription_key,
 )
+# Razširitev klienta za podporo knjižnici instructor (ki skrbi za primerno formatiranje vhodnih podatkov).
 instructor.patch(client=client)
 
-# MinIO client
 s3_client = Minio(
     endpoint=os.getenv("ZRSVN_S3_ENDPOINT", "moja.shramba.arnes.si"),
     access_key=os.getenv("S3_ACCESS_KEY"),
@@ -49,11 +48,9 @@ s3_client = Minio(
 )
 BUCKET_NAME = "zrsvn-rag-najdbe"
 
-# tokenizer for text‐chunk metadata
 tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-m3")
 
-
-# ─── Pydantic schemas ───────────────────────────────────────────────────────────
+# Validator, ki preveri, ali se kratica jezika nahaja znotraj dovoljenega nabora.
 class LanguageValidator:
     allowed_languages = {'SI', 'SH', 'EN', 'IT', 'DE', 'OTHER'}
     allowed_values = ", ".join(allowed_languages)
@@ -65,13 +62,16 @@ class LanguageValidator:
                 raise ValueError(f"Invalid language code: {lang}. Allowed values are {cls.allowed_values}.")
         return v
 
+# Preveri, ali seznam ključnih besed ni daljši od desetih elementov in da ti niso podvojeni.
 def validate_keywords(v):
     if len(v) > 10:
         raise ValueError("A maximum of 10 keywords is allowed.")
-    if len(v) != len(set(v)):  # Compares the length of the list to the length of the set (duplicates removed)
+    if len(v) != len(set(v)):
         raise ValueError("No duplicate keywords are allowed.")
     return v
 
+# Razred prek katerega Instructor knjižnica poskrbi, da se odgovor LLMa ujema z navodilom, ki opredeljuje seznam
+# dovoljenih kratic jezikov (navodilo je podkrepljeno z LanguageValidatorjem).
 class Languages(BaseModel):
     languages: Annotated[
         Optional[List[str]], 
@@ -81,6 +81,8 @@ class Languages(BaseModel):
         description=f"List of languages the text is written in. Allowed values are {LanguageValidator.allowed_values}"
     )
 
+# Razred prek katerega Instructor knjižnica poskrbi, da se odgovor LLMa ujema z navodilom, ki opredeljuje na kakšen način
+# naj generira ključne besede in opis, vezana na podano sliko.
 class ImageMetadata(BaseModel):
     keywords: Annotated[
         List[str], 
@@ -104,6 +106,8 @@ class ImageMetadata(BaseModel):
             )
     )
 
+# Razred prek katerega Instructor knjižnica poskrbi, da se odgovor LLMa ujema z navodilom, ki opredeljuje na kakšen način
+# naj generira kratek povzetek podanega besedila.
 class TextSummary(BaseModel):
     summary: str = Field(
         ..., 
@@ -114,6 +118,8 @@ class TextSummary(BaseModel):
         )
     )
 
+# Razred prek katerega Instructor knjižnica poskrbi, da se odgovor LLMa ujema z navodilom, ki opredeljuje na kakšen način
+# naj generira ključne besede in povzetek, vezana na podan tekst besedilnega bloka.
 class TextChunkMetadata(BaseModel):
     keywords: Annotated[
         List[str], 
@@ -138,6 +144,8 @@ class TextChunkMetadata(BaseModel):
         )
     )
 
+# Razred prek katerega Instructor knjižnica poskrbi, da se odgovor LLMa ujema z navodilom, ki opredeljuje na kakšen način
+# naj generira ključne besede in povzetek, vezana na podano besedilo, ki je sestavljeno iz vseh delov izbrane sekcije.
 class SectionMetadata(BaseModel):
     keywords: Annotated[
         List[str],
@@ -168,6 +176,8 @@ class SectionMetadata(BaseModel):
         )
     )
 
+# Razred prek katerega Instructor knjižnica poskrbi, da se odgovor LLMa ujema z navodilom, ki opredeljuje na kakšen način
+# naj generira ključne besede in splošen povzetek dokumenta, ki povezuje vse njegove sekcije.
 class HighLevelMetadata(BaseModel):
     keywords: Annotated[
         List[str], 
@@ -192,27 +202,31 @@ class HighLevelMetadata(BaseModel):
         )
     )
 
-
-# ─── TASK FUNCTIONS ─────────────────────────────────────────────────────────────
-
+# Naloži vse izrezane slike (pics) in tabele (tables) iz lokalne mape 'output_pics_and_tables'
+# v S3 vedro 'zrsvn-rag-najdbe'. Struktura imen map je pri tem ohranjena kot predpona oz. ključ S3 objekta (S3 key).
 def upload_pics_and_tables_to_s3():
     local_folder = "./output_pics_and_tables"
     bucket_name = "zrsvn-rag-najdbe"
 
-    # derive a dynamic prefix from the folder name
+    # Pridobimo ime mape brez zadnjega '/' (npr. "output_pics_and_tables").
     folder_prefix = os.path.basename(os.path.normpath(local_folder))
 
     try:
+        # Preverimo, ali vedro obstaja; če ne, ga ustvarimo.
         if not s3_client.bucket_exists(bucket_name):
             s3_client.make_bucket(bucket_name)
             print(f"✅ Bucket '{bucket_name}' created.")
 
+        # Sprehodimo se skozi vse datoteke znotraj lokalne mape.
         for root, dirs, files in os.walk(local_folder):
             for file in files:
                 full_path = os.path.join(root, file)
+                # Relativna pot glede na local_folder (brez začetnega prefiksa).
                 relative_path = os.path.relpath(full_path, local_folder)
+                # V S3-u uporabimo ime "output_pics_and_tables/relativna_pot".
                 object_name = f"{folder_prefix}/{relative_path.replace(os.path.sep, '/')}"
 
+                # Datoteko naložimo v S3.
                 s3_client.fput_object(
                     bucket_name,
                     object_name,
@@ -221,8 +235,11 @@ def upload_pics_and_tables_to_s3():
                 print(f"⬆️  Uploaded: {object_name}")
 
     except S3Error as e:
-        print("❌ Napaka:", e)
+        print("❌ Error:", e)
 
+# Poišče vse text_chunks, ki nimajo še opredeljenega/-ih jezika/-ov (languages),
+# kliče Azure-OpenAI, da pridobi seznam jezikov (prek Pydantic Languages modela)
+# in vstavi vsako izmed kratic jezikov v tabelo 'languages' (in vnos veže na text_chunk_id).
 def process_text_chunk_languages(db_params=DB_PARAMS, client=client):
     conn = psycopg2.connect(**db_params)
     try:
@@ -259,7 +276,10 @@ def process_text_chunk_languages(db_params=DB_PARAMS, client=client):
     finally:
         conn.close()
 
-
+# V bazi poišče vse slike, ki nimajo opredeljenih ključnih besed ali opisa,
+# prenese sliko iz S3 in jo zakodira v base64 podatkovni URL. Slednjega
+# pošlje LLMju za generiranje ImageMetadata (tj. ključnih besed in opisa) in
+# nato na podlagi vrednosti njegovega odgovora posodobi zapise v tabeli pictures.
 def process_picture_descriptions(db_params=DB_PARAMS, client=client,
                                  s3_client=s3_client, bucket_name=BUCKET_NAME):
     conn = psycopg2.connect(**db_params)
@@ -278,6 +298,7 @@ def process_picture_descriptions(db_params=DB_PARAMS, client=client,
                 print("Adding picture descriptions and keywords ...")
                 for idx, (pic_id, file_key) in enumerate(pending, start=1):
                     print(f"Progress: [{idx}/{total}] - Processing file: {file_key}")
+                    # Pridobimo vnaprej podpisani (ang. presigned) URL z omejenim časom veljavnosti (1 ura).
                     url = s3_client.presigned_get_object(bucket_name, file_key, expires=timedelta(hours=1))
                     resp = requests.get(url)
                     if resp.status_code != 200:
@@ -287,13 +308,14 @@ def process_picture_descriptions(db_params=DB_PARAMS, client=client,
                     chat_response = client.chat.completions.create(
                         model="gpt-4o-mini",
                         response_model=ImageMetadata,
+                        # Tip vsebine določimo kot 'image_url'.
                         messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url}}]}],
-                        #max_tokens=640,
                         max_tokens=1280,
                         max_retries=2
                     )
                     kws = chat_response.keywords
                     desc = chat_response.description
+                    # Posodobimo vrstico v tabeli pictures s ključnimi besedami in opisom.
                     cur.execute("""
                         UPDATE rag_najdbe.pictures
                         SET keywords = %s, description = %s
@@ -305,7 +327,8 @@ def process_picture_descriptions(db_params=DB_PARAMS, client=client,
     finally:
         conn.close()
 
-
+# Deluje podobno kot process_picture_descriptions, le da imamo opravka s tabelami namesto s slikami:
+# Generiramo ImageMetadata za vsako tabelo, nato posodobimo tabelo tables s ključnimi besedami in opisom.
 def process_table_descriptions(db_params=DB_PARAMS, client=client,
                                s3_client=s3_client, bucket_name=BUCKET_NAME):
     conn = psycopg2.connect(**db_params)
@@ -334,7 +357,6 @@ def process_table_descriptions(db_params=DB_PARAMS, client=client,
                         model="gpt-4o-mini",
                         response_model=ImageMetadata,
                         messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url}}]}],
-                        # max_tokens=640,
                         max_tokens=1280,
                         max_retries=2
                     )
@@ -351,7 +373,9 @@ def process_table_descriptions(db_params=DB_PARAMS, client=client,
     finally:
         conn.close()
 
-
+# Poišče vse text_chunks, ki nimajo ključnih besed ali povzetka,
+# pošlje zahtevo LLMu in pridobi TextChunkMetadata (keywords in summary),
+# na podlago katerih posodobi tabelo text_chunks.
 def process_text_chunk_metadata(db_params=DB_PARAMS, client=client):
     conn = psycopg2.connect(**db_params)
     try:
@@ -386,7 +410,9 @@ def process_text_chunk_metadata(db_params=DB_PARAMS, client=client):
     finally:
         conn.close()
 
-
+# Za vse slike, ki imajo že opis, a še nimajo povzetka, 
+# pošljemo njihov opis LLMju, da dobimo kratek povzetek opisa (prek TextSummary). Na podlagi pridobljenega povzetka
+# posodobimo tabelo pictures.
 def process_picture_summaries(db_params=DB_PARAMS, client=client):
     conn = psycopg2.connect(**db_params)
     try:
@@ -420,7 +446,9 @@ def process_picture_summaries(db_params=DB_PARAMS, client=client):
     finally:
         conn.close()
 
-
+# Podobno kot process_picture_summaries, le da obdelujemo tabele:
+# - Uporabimo opis tabele, pokličemo LLM za TextSummary oz. pridobimo povzetek.
+# - Na podlagi slednjega posodobimo tabelo tables.
 def process_table_summaries(db_params=DB_PARAMS, client=client):
     conn = psycopg2.connect(**db_params)
     try:
@@ -454,7 +482,16 @@ def process_table_summaries(db_params=DB_PARAMS, client=client):
     finally:
         conn.close()
 
-
+# Za vsako sekcijo, ki še nima ključnih besed ali povzetka:
+# 1) Zberemo vse elemente (section_elements) sekcije, razvrščene po vrstnem redu (prek section_seq_position).
+# 2) Za vsakega izmed elementov (paragraph, picture, table) povzamemo ustrezne pod-povzetke, ki se že nahajajo v bazi
+#    (text_chunks.summary, pictures.summary, tables.summary).
+# 3) Slednje pod-povzetke združimo v eno besedilo, kjer vsakega izmed posameznih delov dopolnjuje oznaka 
+#    prek katere opredelimo za katero vrsto povzetka gre ([paragraph_summary], [picture_description_summary], 
+#    [table_description_summary]).
+# 4) Združeno besedilo pošljemo LLMju (prek upoštevanja Instructor razreda SectionMetadata), 
+#    da pridobimo ključne besede in povzetek celotne sekcije.
+# 5) S pridobljenimi podatki posodobimo tabelo sections.
 def process_section_metadata(db_params=DB_PARAMS, client=client):
     conn = psycopg2.connect(**db_params)
     try:
@@ -471,23 +508,20 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
                 print("Adding section metadata ...")
                 for idx, section_id in enumerate(section_ids, start=1):
                     print(f"Progress: [{idx}/{total}] - Processing section ID: {section_id}")
-                    # Store unique (source_identifier, formatted_summary) tuples for the current section
+
                     unique_summary_sources = set() 
                     
-                    ordered_summaries_for_llm = [] # This will store summaries in document order, with uniqueness based on source
+                    ordered_summaries_for_llm = []
 
-                    # First, get all section_elements for the current section, ordered by their sequence in the section
                     cur.execute("""
                         SELECT id, type
                         FROM rag_najdbe.section_elements
                         WHERE section_id = %s
                         ORDER BY section_seq_position -- This is the key for order preservation!
                     """, (section_id,))
-                    section_elements_in_order = cur.fetchall() # Returns list of (id, type)
+                    section_elements_in_order = cur.fetchall()
 
                     for element_id, element_type in section_elements_in_order:
-                        # This list will store tuples of (source_id, summary_text) for the current element
-                        # The source_id will be text_chunk.id, picture.id, or table.id
                         current_element_summary_data = []
 
                         if element_type == 'paragraph':
@@ -499,7 +533,7 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
                                 WHERE p.section_element_id = %s AND tc.summary IS NOT NULL
                                 ORDER BY tc.id
                             """, (element_id,))
-                            current_element_summary_data = cur.fetchall() # Returns list of (tc.id, tc.summary)
+                            current_element_summary_data = cur.fetchall()
 
                         elif element_type == 'picture':
                             cur.execute("""
@@ -507,7 +541,7 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
                                 FROM rag_najdbe.pictures pic
                                 WHERE pic.section_element_id = %s AND pic.summary IS NOT NULL
                             """, (element_id,))
-                            current_element_summary_data = cur.fetchall() # Returns list of (pic.id, pic.summary)
+                            current_element_summary_data = cur.fetchall()
 
                         elif element_type == 'table':
                             cur.execute("""
@@ -515,8 +549,9 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
                                 FROM rag_najdbe.tables tab
                                 WHERE tab.section_element_id = %s AND tab.summary IS NOT NULL
                             """, (element_id,))
-                            current_element_summary_data = cur.fetchall() # Returns list of (tab.id, tab.summary)
+                            current_element_summary_data = cur.fetchall()
                         
+                        # Oznake, ki jih bomo dodali pred vsak povzetek, da bo LLM vedel od kod povzetek izhaja.
                         tag_map = {
                             'paragraph': '[paragraph_summary]:\n',
                             'picture'  : '[picture_description_summary]:\n',
@@ -527,8 +562,6 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
                         for source_id, summary_text in current_element_summary_data:
                             formatted_summary_for_llm = f"{prefix}{summary_text}"
                             
-                            # Use a tuple (source_id, summary_text) to check for uniqueness
-                            # This means "summary A from text_chunk 1" is different from "summary A from text_chunk 2"
                             uniqueness_key = (source_id, summary_text) 
                             
                             if uniqueness_key not in unique_summary_sources:
@@ -538,7 +571,7 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
                     if not ordered_summaries_for_llm:
                         continue
                     
-                    text = "\n\n".join(ordered_summaries_for_llm) # This 'text' will now preserve original order
+                    text = "\n\n".join(ordered_summaries_for_llm)
                     print(f"\nText being passed into LLM:\n{text}\n")
                     resp = client.chat.completions.create(
                         model="gpt-4o-mini",
@@ -558,7 +591,13 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
     finally:
         conn.close()
 
-
+# Za vsak dokument (file), ki še nima ključnih besed ali povzetka:
+# 1) Zberemo vse povzetke (summary) njegovih sekcij, 
+#    urejene sekvenčno prek file_seq_position iz section_elements.
+# 2) Povzetke združimo v en niz (ločene s presledki).
+# 3) Niz pošljemo LLMju (prek upoštevanja HighLevelMetadata) z namenom generiranja ključnih besed 
+#    in povzetka celotnega dokumenta.
+# 4) Na podlagi pridobljenih podatkov posodobimo tabelo files.
 def process_file_metadata(db_params=DB_PARAMS, client=client):
     conn = psycopg2.connect(**db_params)
     try:
@@ -594,7 +633,6 @@ def process_file_metadata(db_params=DB_PARAMS, client=client):
                         model="gpt-4o-mini",
                         response_model=HighLevelMetadata,
                         messages=[{"role": "user", "content": [{"type": "text", "text": text}]}],
-                        # max_tokens=512,
                         max_tokens=1024,
                         max_retries=2
                     )

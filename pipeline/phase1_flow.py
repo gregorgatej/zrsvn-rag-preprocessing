@@ -1,4 +1,3 @@
-# Prefect: Orodje za definiranje podatkovnih tokov (flows) in nalog (tasks).
 from prefect import flow, task
 # Iz modula phase1 uvozimo dve funkciji: parse_pdf (prenese in pretvori PDF v JSON)
 # ter extract_data (iz JSON izreže slike/tabele in pripravi končne JSONe).

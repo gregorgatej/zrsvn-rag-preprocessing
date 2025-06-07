@@ -37,9 +37,6 @@ register_adapter(np.float64, lambda val: AsIs(val))
 
 # Ustvari in vrne novo povezavo do PostgreSQL baze s parametri DB_PARAMS.
 def _get_conn():
-    """
-    Creates and returns a new connection to the PostgreSQL database using the parameters from DB_PARAMS.
-    """
     return psycopg2.connect(**DB_PARAMS)
 
 # Prebere JSON datoteko (ki vsebuje informacije o dokumentu, sekcijah in chunkih) in nato:
@@ -134,16 +131,6 @@ def insert_file_and_sections(json_path: str):
     conn.commit()
     cur.close(); conn.close()
 
-    # === TODO opt. predlogi ===
-    # 1) register tokenizer: če se ta funkcija kliče večkrat, vsakič naloži tokenizer,
-    #    kar lahko upočasni. Bolj optimalno bi bilo, da se tokenizer ustvari enkrat zunaj
-    #    ali se predhodno shrani kot globalna spremenljivka.
-    # 2) večkratni klic cur.execute z vstavljanjem posameznih vrstic: lahko razmislimo
-    #    o batch-vstavitvah (execute_batch ali COPY), da zmanjšamo število posameznih klicev
-    #    in pohitrimo vnos.
-    # 3) nabiranje paragrafov in ostalih elementov: lahko zgradimo lokalne liste tuple-ov
-    #    in jih nato vstavimo v enem samem execute_many, namesto da vsako vrsto posebej vstavimo.
-
 # 1) Pridobimo vse odstavke iz tabele paragraphs in tiste, ki so manjši (in znotraj iste sekcije) združimo.
 # 2) Originalne odstavke (v primeru, da so dovolj veliki) ali združeno besedilo vstavimo v tabelo prepared_texts.
 # 3) Če je vnos iz prepared_text daljši od CHUNK_THRESHOLD ga razbijemo na manjše kose, sicer ga shranimo
@@ -236,10 +223,6 @@ def prepare_and_chunk_texts():
 
     conn.commit()
     cur.close(); conn.close()
-
-    # === TODO opt. predlogi ===
-    # 1) ponovno ustvarjanje tokenizer in chunker znotraj funkcije: 
-    #    - TODO: naloži jih enkrat zunaj (globalno), saj se večkrat kliče prepare_and_chunk_texts.
 
 # Prebere Excel datoteko z metapodatki (vrsticami, ki vsebujejo s3_key, leto in vir) in nato:
 # 1) Za vsako vrstico iz Excel datoteke kjer se file_name_with_folder ujema z s3_key iz files vnese v slednjo

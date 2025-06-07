@@ -235,14 +235,7 @@ def upload_pics_and_tables_to_s3():
                 print(f"⬆️  Uploaded: {object_name}")
 
     except S3Error as e:
-        print("❌ Napaka:", e)
-
-    # === TODO optimizacije ===
-    # 1) Če je v mapi veliko datotek, bo vsaka datoteka posebej naložena, kar povzroči veliko I/O klicev.
-    #    - Razmisliti o asinhroni ali večnitni implementaciji nalaganja (ThreadPoolExecutor), 
-    #      da se hkrati pošilja več datotek in pohitri postopek.
-    # 2) Vnaprej preveriti, katere datoteke so bile že naložene (primerjava z bazo ali lokalnim seznamom),
-    #    da se ne naložijo ponovno vse datoteke ob vsakem zagonu.
+        print("❌ Error:", e)
 
 # Poišče vse text_chunks, ki nimajo še opredeljenega/-ih jezika/-ov (languages),
 # kliče Azure-OpenAI, da pridobi seznam jezikov (prek Pydantic Languages modela)
@@ -282,13 +275,6 @@ def process_text_chunk_languages(db_params=DB_PARAMS, client=client):
         print("Error processing languages:", e)
     finally:
         conn.close()
-
-    # === TODO optimizacije ===
-    # 1) Za vsak text_chunk pošljemo en LLM klic. 
-    #    - Razmisliti o paketnem pošiljanju (batch) ali asinkronem klicanju LLM za več chunk-ov hkrati, 
-    #      če podporo nudi OpenAI.  
-    # 2) Če je tabela languages zelo velika, bi lahko predhodno preverili, kateri chunki so novi, 
-    #    namesto da preverjamo z NOT IN (SELECT ...), ker to pri velikih tabelah postane neoptimalno.
 
 # V bazi poišče vse slike, ki nimajo opredeljenih ključnih besed ali opisa,
 # prenese sliko iz S3 in jo zakodira v base64 podatkovni URL. Slednjega
@@ -341,11 +327,6 @@ def process_picture_descriptions(db_params=DB_PARAMS, client=client,
     finally:
         conn.close()
 
-    # === TODO optimizacije ===
-    # 1) HTTP zahtevki (requests.get) se izvajajo sinhrono. 
-    #    - Razmisliti o asinhronih klicih (asyncio + aiohttp) ali uporabo več niti, 
-    #      da prenašamo več slik hkrati (če so slike velike, se bo postopek v nasprotnem primer počasno).
-
 # Deluje podobno kot process_picture_descriptions, le da imamo opravka s tabelami namesto s slikami:
 # Generiramo ImageMetadata za vsako tabelo, nato posodobimo tabelo tables s ključnimi besedami in opisom.
 def process_table_descriptions(db_params=DB_PARAMS, client=client,
@@ -376,7 +357,6 @@ def process_table_descriptions(db_params=DB_PARAMS, client=client,
                         model="gpt-4o-mini",
                         response_model=ImageMetadata,
                         messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url}}]}],
-                        # max_tokens=640,
                         max_tokens=1280,
                         max_retries=2
                     )
@@ -392,12 +372,6 @@ def process_table_descriptions(db_params=DB_PARAMS, client=client,
         print("Error processing table descriptions:", e)
     finally:
         conn.close()
-
-        # === TODO optimizacije ===
-    # 1) Koda je skoraj enaka kot process_picture_descriptions; 
-    #    - TODO: združiti obe funkciji v eno generično funkcijo (npr. process_image_metadata(table_or_picture)),
-    #      ki bi sprejemala ime tabele in ustrezne SQL stavke, s čimer odstranimo dvojenje kode.
-    # 2) Isto kot za slike: razmisliti o asinhronem nalaganju in uporabi neposrednih presigniranih URL-jev.
 
 # Poišče vse text_chunks, ki nimajo ključnih besed ali povzetka,
 # pošlje zahtevo LLMu in pridobi TextChunkMetadata (keywords in summary),
@@ -472,9 +446,6 @@ def process_picture_summaries(db_params=DB_PARAMS, client=client):
     finally:
         conn.close()
 
-    # === TODO optimizacije ===
-    # Preveriti, ali lahko LLM kličemo za več opisov hkrati.
-
 # Podobno kot process_picture_summaries, le da obdelujemo tabele:
 # - Uporabimo opis tabele, pokličemo LLM za TextSummary oz. pridobimo povzetek.
 # - Na podlagi slednjega posodobimo tabelo tables.
@@ -510,9 +481,6 @@ def process_table_summaries(db_params=DB_PARAMS, client=client):
         print(f"Processed {len(rows)} tables for summaries.")
     finally:
         conn.close()
-
-    # === TODO optimizacije ===
-    # 1) Združiti klice LLM za več opisov hkrati, če to podporo obstaja.
 
 # Za vsako sekcijo, ki še nima ključnih besed ali povzetka:
 # 1) Zberemo vse elemente (section_elements) sekcije, razvrščene po vrstnem redu (prek section_seq_position).
@@ -551,11 +519,9 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
                         WHERE section_id = %s
                         ORDER BY section_seq_position -- This is the key for order preservation!
                     """, (section_id,))
-                    section_elements_in_order = cur.fetchall() # Returns list of (id, type)
+                    section_elements_in_order = cur.fetchall()
 
                     for element_id, element_type in section_elements_in_order:
-                        # This list will store tuples of (source_id, summary_text) for the current element
-                        # The source_id will be text_chunk.id, picture.id, or table.id
                         current_element_summary_data = []
 
                         if element_type == 'paragraph':
@@ -625,10 +591,6 @@ def process_section_metadata(db_params=DB_PARAMS, client=client):
     finally:
         conn.close()
 
-    # === TODO optimizacije ===
-    # 1) Če se sekcije zelo redko posodabljajo, lahko preverimo le nove ali spremembe, 
-    # namesto da pregledamo vse sekcije vsakokrat.
-
 # Za vsak dokument (file), ki še nima ključnih besed ali povzetka:
 # 1) Zberemo vse povzetke (summary) njegovih sekcij, 
 #    urejene sekvenčno prek file_seq_position iz section_elements.
@@ -671,7 +633,6 @@ def process_file_metadata(db_params=DB_PARAMS, client=client):
                         model="gpt-4o-mini",
                         response_model=HighLevelMetadata,
                         messages=[{"role": "user", "content": [{"type": "text", "text": text}]}],
-                        # max_tokens=512,
                         max_tokens=1024,
                         max_retries=2
                     )

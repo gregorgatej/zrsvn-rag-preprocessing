@@ -24,12 +24,11 @@ DB_PARAMS = {
 }
 
 # Definiramo parametre modela, ki ga uporabimo za generiranje vložitev.
-EMBED_MODEL_NAME = "BAAI/bge-m3"
-EMBED_MODEL_TYPE = "text"
-EMBED_VECTOR_DIM = 768
-BATCH_SIZE       = 100
-# TODO Ta prompt bi lahko prilagodili.
-QUERY_HINT       = "Represent this sentence for searching relevant passages:"
+EMBED_MODEL_NAME  = "BAAI/bge-m3"
+EMBED_MODEL_TYPE  = "text"
+EMBED_VECTOR_DIM  = 768
+BATCH_SIZE        = 100
+QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages:"
 
 # Glavna funkcija, ki:
 # 1) Shrani informacije o modelu v embedding_models (če tam še ni prisoten).
@@ -44,7 +43,6 @@ def generate_and_store_embeddings():
     conn = psycopg2.connect(**DB_PARAMS)
     cur  = conn.cursor()
 
-    # 1) Upsert embedding_models metadata
     cur.execute(
         "SELECT id FROM embedding_models WHERE name = %s",
         (EMBED_MODEL_NAME,)
@@ -65,19 +63,15 @@ def generate_and_store_embeddings():
         conn.commit()
         logging.info(f"Inserted new embedding_model id={model_id}")
 
-    # 2) Load the model once
     logging.info(f"Loading model {EMBED_MODEL_NAME}…")
     model = FlagAutoModel.from_finetuned(
         EMBED_MODEL_NAME,
-        query_instruction_for_retrieval=QUERY_HINT,
+        query_instruction_for_retrieval=QUERY_INSTRUCTION,
         # Uporabimo standardno, "polno" natančnost številčnih izračunov.
         use_fp16=False,
         # Naprava, ki jo uporabimo je GPU na indeksu 0.
         device=["cuda:0"]
     )
-
-    # TODO: Preveriti, ali je mogoče naložiti model na CPU, kadar GPU ni na voljo, da preprečimo napako.
-    # TODO: Razmisliti o caching-u modela, če se funkcija kliče večkrat, namesto vsakič nalagati znova.
 
     # Obdelava besedilnih blokov.
     logging.info("Fetching text chunks…")
@@ -146,12 +140,3 @@ def generate_and_store_embeddings():
 
 if __name__ == "__main__":
     generate_and_store_embeddings()
-
-# === Povzetek možnih optimizacij ===
-# 1) UPSERT logika za vsako tabelo embeddings: trenutni INSERT lahko povzroči napako ali podvajanje,
-#    če ponovno zaženemo skripto. Bolje bi bilo uporabiti "ON CONFLICT" ali predhodno preveriti, 
-#    ali embedding že obstaja (npr. kombinacija model_id + text_chunk_id).
-# 2) Batch size: trenutno je fiksno nastavljeno na 100. Odvisno od pomnilniških omejitev GPU-ja in baze,
-#    bi lahko dinamično prilagajali velikost batch-a ali spremljali porabo pomnilnika.
-# 3) Model naložimo le enkrat, kar je dobro. Lahko pa razmislimo o uporabi FP16 ali CPU mode, 
-#    če GPU ni na voljo, da se izognemo napakam ali hitreje izvajamo na različnih strojnih okoljih.

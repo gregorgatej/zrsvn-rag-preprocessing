@@ -1,3 +1,4 @@
+# Prefect: Orodje za definiranje podatkovnih tokov (flows) in nalog (tasks).
 # Za zaporedni zagon vseh štirih faz predprocesiranja PDF datotek.
 from prefect import flow
 
@@ -55,7 +56,3 @@ def all_phases_flow(
 
 if __name__ == "__main__":
     all_phases_flow()
-
-# === Povzetek možnih optimizacij ===
-# 1) Trenutni tok ne preverja uspeha vsake faze pred nadaljevanjem; dodati pogoje (if/else) ali Prefect wait_for, 
-#    da zagotovimo pravilno zaporedje in preprečimo nepotrebne klice.

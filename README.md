@@ -49,7 +49,6 @@ AZURE_OPENAI_API_KEY=tvoj_azure_openai_key
 AZURE_OPENAI_ENDPOINT=tvoj_azure_endpoint
 ```
 4. Pripravite PostgreSQL bazo s shemo rag_najdbe.
-```
 
 ## Uporaba
 

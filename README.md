@@ -35,15 +35,20 @@ Sistem implementira štiri-fazni pipeline za predprocesiranje PDF dokumentov:
 ```bash  
 git clone https://github.com/gregorgatej/zrsvn-rag-preprocessing.git  
 cd zrsvn-rag-preprocessing
-Namestite odvisnosti:
+```
+2. Namestite odvisnosti:
+```bash  
 pip install -r requirements.txt
-Ustvarite .env datoteko z naslednjimi spremenljivkami:
+```
+3. Ustvarite .env datoteko z naslednjimi spremenljivkami:
+```bash  
 S3_ACCESS_KEY=tvoj_s3_access_key  
 S3_SECRET_ACCESS_KEY=tvoj_s3_secret_key  
 POSTGRES_PASSWORD=tvoj_postgres_password  
 AZURE_OPENAI_API_KEY=tvoj_azure_openai_key  
 AZURE_OPENAI_ENDPOINT=tvoj_azure_endpoint
-Pripravite PostgreSQL bazo s shemo rag_najdbe
+```
+4. Pripravite PostgreSQL bazo s shemo rag_najdbe.
 ```
 
 ## Uporaba

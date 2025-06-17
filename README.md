@@ -58,16 +58,16 @@ python pipeline/all_phases_flow.py
 
 ### Zagon posameznih faz
 
-# Faza 1: PDF parsing
+#### Faza 1: PDF parsing
 python pipeline/phase1_flow.py  
   
-# Faza 2: Database ingestion
+#### Faza 2: Database ingestion
 python pipeline/phase2_flow.py  
   
-# Faza 3: AI metadata generation
+#### Faza 3: AI metadata generation
 python pipeline/phase3_flow.py  
   
-# Faza 4: Embeddings generation
+#### Faza 4: Embeddings generation
 python pipeline/phase4_flow.py
 
 ## Struktura podatkov

@@ -123,8 +123,8 @@ def parse_pdf(pdf_in_path, json_out_path="intermediate_jsons", already_processed
     )
 
     for file in tqdm(pdf_files, desc="Parsing PDFs"):
-        # Pridobimo relativno pot, ki je vezana na temp_input_pdfs.
-        pdf_dict_key = file.resolve().relative_to(temp_input_folder).as_posix()
+        # Uporabimo relativno pot glede na trenutno delovno mapo
+        pdf_dict_key = file.resolve().relative_to(Path.cwd()).as_posix()
 
         # Že obdelane datoteke preskočimo.
         if already_processed and pdf_dict_key in already_processed:

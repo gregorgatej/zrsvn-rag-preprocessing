@@ -290,7 +290,7 @@ def extract_data(
 
     # Ustvari slovar (chunk_dict) z vsemi relevantnimi podatki, ki se tičejo posameznega PDF elementa oz. 'chunk'-a:
     # - ref: referenca na izvorni JSON element (npr. "#/texts/3").
-    # - boundingBox: seznam z enim slovarjem, ki vsebuje koordinate (l,t,r,b) in izvor koordinat.
+    # - boundingBox: slovar, ki vsebuje koordinate (l,t,r,b) in izvor koordinat.
     # - chunkID: enolični ID elementa (npr. "aB3kLm9Nz").
     # - contentType: seznam z enim elementom (npr. ["paragraph"], ["picture"], ["table"]).
     # - sectionPages: prazen seznam, ki se napolni kasneje.
@@ -324,30 +324,30 @@ def extract_data(
             if len(charspan) > 1:
                 # Druga vrednost charspana nam da skupno število znakov.
                 nr_chars = charspan[1]
-        # Pripravimo bounding_box_list, bodisi iz bounding_box_override, bodisi iz prov["bbox"].
+        # Pripravimo bounding_box, bodisi iz bounding_box_override, bodisi iz prov["bbox"].
         if bounding_box_override is not None:
             # bounding_box_override je nabor vrednosti (l_pdf, top_pdf, r_pdf, bottom_pdf), izraženih v PDF točkah.
             (l_pdf, top_pdf, r_pdf, bottom_pdf) = bounding_box_override
-            bounding_box_list = [{
+            bounding_box = {
                 "l": float(l_pdf),
                 "t": float(top_pdf),
                 "r": float(r_pdf),
                 "b": float(bottom_pdf),
                 "coord_origin": "BOTTOMLEFT"
-            }]
+            }
         else:
             # Uporabimo bbox vrednosti iz prov.
-            bounding_box_list = [{
+            bounding_box = {
                 "l": prov["bbox"]["l"],
                 "t": prov["bbox"]["t"],
                 "r": prov["bbox"]["r"],
                 "b": prov["bbox"]["b"],
                 "coord_origin": "BOTTOMLEFT"
-            }]
+            }
         # Sestavimo slovar z vsemi vrednostmi.
         chunk_dict = {
             "ref": ref_value,
-            "boundingBox": bounding_box_list,
+            "boundingBox": bounding_box,
             "chunkID": chunk_id,
             "contentType": [content_type],
             "sectionPages": [],

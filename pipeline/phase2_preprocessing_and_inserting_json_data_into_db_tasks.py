@@ -85,7 +85,7 @@ def insert_file_and_sections(json_path: str):
                 section_map[sid_json] = cur.fetchone()[0]
 
             se_id = section_map[sid_json]
-            bbox = chunk["boundingBox"][0]
+            bbox = chunk["boundingBox"]
             # Če gre za sliko/tabelo je chunkLocalPath enak S3 ključu.
             s3key = chunk.get("chunkLocalPath")
 

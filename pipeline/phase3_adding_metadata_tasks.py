@@ -74,7 +74,7 @@ def validate_keywords(v):
 # dovoljenih kratic jezikov (navodilo je podkrepljeno z LanguageValidatorjem).
 class Languages(BaseModel):
     languages: Annotated[
-        Optional[List[str]], 
+        List[str], 
         AfterValidator(LanguageValidator.validate_languages)
     ] = Field(
         ..., 
@@ -261,7 +261,7 @@ def process_text_chunk_languages(db_params=DB_PARAMS, client=client):
                         model="gpt-4o-mini",
                         response_model=Languages,
                         messages=[{"role": "user", "content": [{"type": "text", "text": text}]}],
-                        max_tokens=96,
+                        max_tokens=128,
                         max_retries=2
                     )
                     for lang_code in chat_response.languages:

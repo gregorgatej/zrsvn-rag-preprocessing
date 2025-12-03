@@ -1,6 +1,6 @@
 # ZRSVN RAG Preprocessing  
   
-Python sistem za predprocesiranje dokumentov za RAG (Retrieval Augmented Generation) aplikacije.  
+Sistem za predprocesiranje dokumentov za RAG (Retrieval Augmented Generation) aplikacije.  
   
 ## O projektu  
   

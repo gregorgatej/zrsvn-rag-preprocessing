@@ -1,85 +1,87 @@
 # ZRSVN RAG Preprocessing  
   
-Sistem za predprocesiranje dokumentov za RAG (Retrieval Augmented Generation) aplikacije.  
+System for preprocessing documents for RAG (Retrieval Augmented Generation) applications.  
   
-## O projektu  
+## About the project  
   
-Sistem implementira štiri-fazni pipeline za predprocesiranje PDF dokumentov:  
+The system implements a four-phase pipeline for preprocessing PDF documents:  
   
-- **Faza 1**: Razčlenjevanje PDF dokumentov in generiranje JSON struktur.  
-- **Faza 2**: Predobdelava podatkov in vstavljanje v PostgreSQL bazo.
-- **Faza 3**: Generiranje metapodatkov (ključne besede, povzetki, opisi) z LLMi.
-- **Faza 4**: Generiranje vektorskih vložitev za semantično iskanje.
+- **Phase 1**: Parsing PDF documents and generating JSON structures
+- **Phase 2**: Data preprocessing and insertion into a PostgreSQL database
+- **Phase 3**: Generation of metadata (keywords, summaries, descriptions) using LLMs
+- **Phase 4**: Generation of vector embeddings for semantic search
   
-## Funkcionalnosti  
+## Features  
   
-- Prenos PDF dokumentov iz S3/MinIO shrambe.
-- Ekstrakcija besedil, slik in tabel iz PDFjev z Docling.  
-- Segmentacija besedila na optimalno dolžino.  
-- LLM generirane ključne besede in povzetki.  
-- Zaznavanje jezika besedilnih blokov.  
-- Generiranje 768-dimenzionalnih vložitev (privzeto z BAAI/bge-m3 modelom).  
-- Hierarhična struktura metapodatkov (dokument → sekcija → element).  
+- Downloading PDF documents from S3/MinIO storage
+- Extraction of text, images, and tables from PDFs using Docling 
+- Segmentation of text into optimal-length chunks
+- LLM-generated keywords and summaries
+- Detection of the language of text blocks
+- Generation of 768-dimensional embeddings (default using the BAAI/bge-m3 model)
+- Hierarchical metadata structure (document → section → element)
   
-## Tehnične zahteve  
+## Technical requirements  
   
-- Python 3.8+.  
-- PostgreSQL baza s shemo `rag_najdbe`.
-- MinIO/S3 shramba.  
-- Idealno CUDA-kompatibilna grafična kartica (za hitrejše ustvarjanje vložitev).  
-- Azure OpenAI API dostop.  
+- Python 3.8+
+- PostgreSQL database with the `rag_najdbe` schema
+- MinIO/S3 storage
+- Ideally a CUDA-compatible GPU (for faster embedding generation)
+- Azure OpenAI API access
   
-## Namestitev  
+## Installation  
   
-1. Klonirajte repozitorij:  
+1. Clone the repository:  
 ```bash  
 git clone https://github.com/gregorgatej/zrsvn-rag-preprocessing.git  
 cd zrsvn-rag-preprocessing
 ```
-2. Namestite odvisnosti:
+
+2. Install dependencies:
 ```bash  
 pip install -r requirements.txt
 ```
-3. Ustvarite .env datoteko z naslednjimi spremenljivkami:
+
+3. Create a .env file with the following variables:
 ```bash  
-S3_ACCESS_KEY=tvoj_s3_access_key  
-S3_SECRET_ACCESS_KEY=tvoj_s3_secret_key  
-POSTGRES_PASSWORD=tvoj_postgres_password  
-AZURE_OPENAI_API_KEY=tvoj_azure_openai_key  
-AZURE_OPENAI_ENDPOINT=tvoj_azure_endpoint
+S3_ACCESS_KEY=your_s3_access_key  
+S3_SECRET_ACCESS_KEY=your_s3_secret_key  
+POSTGRES_PASSWORD=your_postgres_password  
+AZURE_OPENAI_API_KEY=your_azure_openai_key  
+AZURE_OPENAI_ENDPOINT=your_azure_endpoint
 ```
-4. Pripravite PostgreSQL bazo s shemo rag_najdbe.
 
-## Uporaba
+4. Prepare the PostgreSQL database with the rag_najdbe schema.
 
-### Zagon celotnega pipeline-a
+## Usage
 
+### Running the full pipeline
+
+```bash  
 python pipeline/all_phases_flow.py
+```
 
-### Zagon posameznih faz
+### Running individual phases
 
-python pipeline/phase1_flow.py  
-  
-python pipeline/phase2_flow.py  
-  
-python pipeline/phase3_flow.py  
-  
+```bash  
+python pipeline/phase1_flow.py
+python pipeline/phase2_flow.py
+python pipeline/phase3_flow.py
 python pipeline/phase4_flow.py
+```
 
-## Struktura podatkov
+## Data structure
 
-Sistem ustvari hierarhično strukturo podatkov v PostgreSQL bazi :
+The system creates a hierarchical data structure in the PostgreSQL database:
+- files - basic document metadata
+- sections - sections within documents
+- section_elements - individual elements (paragraphs, images, tables)
+- text_chunks - optimized text blocks for RAG
+- embeddings - vector representations for semantic search
 
-- files - osnovni metapodatki dokumentov.
-- sections - sekcije znotraj dokumentov.
-- section_elements - posamezni elementi (odstavki, slike, tabele).
-- text_chunks - optimizirani besedilni bloki za RAG.
-- embeddings - vektorske reprezentacije za semantično iskanje.
+## Orchestration
 
-## Orkestracija
-
-Pipeline uporablja Prefect za upravljanje podatkovnih tokov z vgrajeno podporo za:
-
-- Avtomatsko ponovitev ob napakah (3x z 2s zamikom).
-- Sledenje napredka z JSON datotekami.
-- Zaporedno izvajanje faz.
+The pipeline uses Prefect to manage data flows with built-in support for:
+- Automatic retries on errors (3 times with a 2s delay)
+- Progress tracking with JSON files
+- Sequential execution of phases

@@ -1,37 +1,36 @@
-# Prefect: Orodje za definiranje podatkovnih tokov (flows) in nalog (tasks).
-# Za zaporedni zagon vseh štirih faz predprocesiranja PDF datotek.
+# Prefect: Tool for defining data flows and tasks.
+# For sequential execution of all four PDF preprocessing phases.
 from prefect import flow
-# Uvoz posameznih faz, ki so ovite v Prefect funkcije podatkovnih tokov.
-# Faza 1: Razčlenjevanje PDFjev in generiranje JSONov.
+# Import of individual phases wrapped in Prefect data flow functions.
+# Phase 1: PDF parsing and JSON generation.
 from pipeline.phase1_flow import phase1_flow
-# Faza 2: Predobdelava podatkov in njihovo vstavljanje v bazo.
+# Phase 2: Data preprocessing and insertion into database.
 from pipeline.phase2_flow import phase2_flow
-# Faza 3: Generiranje dodatnih metapodatkov (seznamov jezikov, opisov, ključnih besed in povzetkov).
+# Phase 3: Generation of additional metadata (language lists, descriptions, keywords and summaries).
 from pipeline.phase3_flow import phase3_flow
-# Faza 4: Generiranje vložitev.
+# Phase 4: Generation of embeddings.
 from pipeline.phase4_flow import phase4_flow
 
-# Prefect podatkovni tok, ki poveže vse štiri faze.
+# Prefect data flow that connects all four phases.
 @flow
 def all_phases_flow(
-    # Privzeti parametri (ki jih lahko ob zagonu skripte tudi prepišemo).
-    # Nastavimo kje se nahajajo vhodni PDFji za fazo 1.
+    # Set where input PDFs are located for phase 1.
     pdf_input_folder: str = "input_pdfs",
-    # Kam shranimo vmesne JSONe iz faze 1.
+    # Where to save intermediate JSONs from phase 1.
     intermediate_folder: str = "intermediate_jsons",
-    # Kam shranimo izrezane slike/tabele iz faze 1.
+    # Where to save extracted images/tables from phase 1.
     output_pics_folder: str = "output_pics_and_tables",
-    # Kam shranimo končne JSON-e iz faze 1.
+    # Where to save final JSONs from phase 1.
     output_json_folder: str = "output_jsons",
-    # Osnovna pot za fazo 1.
+    # Base path for phase 1.
     base_dir: str = ".",
-    # Datoteka za beleženje napredka faze 1.1 (parse_pdf)
+    # File for tracking progress of phase 1.1 (parse_pdf)
     parse_progress: str = "parse_progress.json",
-    # Datoteka za beleženje napredka faze 1.2 (extract_data).
+    # File for tracking progress of phase 1.2 (extract_data).
     extract_progress: str = "extract_progress.json",
-    # Kje se bodo nahajali končni JSONi faze 2.
+    # Where the final JSONs from phase 2 will be located.
     json_input_folder: str = "output_jsons",
-    # Pot do Excel datoteke, ki jo potrebujemo za fazo 2.
+    # Path to the Excel file needed for phase 2.
     metadata_xlsx_path: str = "./additional_metadata/Seznam_vrst_in_virov_20241212.xlsx",
 ):
     phase1_flow(

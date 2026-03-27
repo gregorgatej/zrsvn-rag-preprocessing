@@ -5,10 +5,9 @@ import psycopg2
 from psycopg2.extensions import register_adapter, AsIs
 from dotenv import load_dotenv
 from tqdm import tqdm
-# Za ustvarjanje vložitev (ang. embeddings).
 from FlagEmbedding import FlagAutoModel
 
-# Registriramo numpy adapterje, da lahko prek psycopg2 vstavimo v bazo podatke vezane na vložitve.
+# Register numpy adapters so we can insert data related to embeddings via psycopg2 into the database.
 register_adapter(np.ndarray, lambda arr: AsIs(arr.tolist()))
 register_adapter(np.float32, lambda val: AsIs(val))
 register_adapter(np.float64, lambda val: AsIs(val))
@@ -22,22 +21,20 @@ DB_PARAMS = {
     "port":     "5432",
     "options":  "-c search_path=rag_najdbe"
 }
-
-# Definiramo parametre modela, ki ga uporabimo za generiranje vložitev.
 EMBED_MODEL_NAME  = "BAAI/bge-m3"
 EMBED_MODEL_TYPE  = "text"
 EMBED_VECTOR_DIM  = 768
 BATCH_SIZE        = 100
 QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages:"
 
-# Glavna funkcija, ki:
-# 1) Shrani informacije o modelu v embedding_models (če tam še ni prisoten).
-# 2) Naloži vložitveni model (prek FlagAutoModel).
-# 3) Ustvari vložitve za:
-#    a) text_chunks (besedilne bloke),
-#    b) picture descriptions (opise slik),
-#    c) table descriptions (opise tabel).
-# 4) Shranjuje vložitve v tabelo embeddings.
+# Main function that:
+# 1) Saves model information to embedding_models (if not already present there).
+# 2) Loads embedding model (via FlagAutoModel).
+# 3) Creates embeddings for:
+#    a) text_chunks (text blocks),
+#    b) picture descriptions (image descriptions),
+#    c) table descriptions (table descriptions).
+# 4) Stores embeddings in embeddings table.
 def generate_and_store_embeddings():
     logging.basicConfig(level=logging.INFO)
     conn = psycopg2.connect(**DB_PARAMS)
@@ -67,13 +64,12 @@ def generate_and_store_embeddings():
     model = FlagAutoModel.from_finetuned(
         EMBED_MODEL_NAME,
         query_instruction_for_retrieval=QUERY_INSTRUCTION,
-        # Uporabimo standardno, "polno" natančnost številčnih izračunov.
+        # Use standard, "full" precision for numerical calculations.
         use_fp16=False,
-        # Naprava, ki jo uporabimo je GPU na indeksu 0.
         device=["cuda:0"]
     )
 
-    # Obdelava besedilnih blokov.
+    # Process text blocks.
     logging.info("Fetching text chunks…")
     cur.execute("SELECT id, text FROM text_chunks;")
     chunks = cur.fetchall()
@@ -84,7 +80,7 @@ def generate_and_store_embeddings():
         INSERT INTO embeddings (vector, embedding_model_id, text_chunk_id)
         VALUES (%s, %s, %s)
     """
-    # Seznam text_chunks obdelamo po skupinah (ang. batches), da ne preobremenimo pomnilnika.
+    # Process list of text_chunks in batches (ang. batches) to avoid overloading memory.
     for i in tqdm(range(0, total, BATCH_SIZE), desc="TextChunk Batches"):
         batch = chunks[i : i + BATCH_SIZE]
         ids, texts = zip(*batch)
@@ -94,7 +90,6 @@ def generate_and_store_embeddings():
         cur.executemany(insert_tc, to_ins)
         conn.commit()
 
-    # Obdelava opisov slik.
     logging.info("Fetching picture descriptions…")
     cur.execute("SELECT id, description FROM pictures WHERE description IS NOT NULL;")
     pics = cur.fetchall()
@@ -114,7 +109,6 @@ def generate_and_store_embeddings():
         cur.executemany(insert_pic, to_ins)
         conn.commit()
 
-    # Obdelava opisov tabel.
     logging.info("Fetching table descriptions…")
     cur.execute("SELECT id, description FROM tables WHERE description IS NOT NULL;")
     tabs = cur.fetchall()

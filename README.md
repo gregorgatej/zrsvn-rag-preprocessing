@@ -79,6 +79,12 @@ The system creates a hierarchical data structure in the PostgreSQL database:
 - text_chunks - optimized text blocks for RAG
 - embeddings - vector representations for semantic search
 
+## DB schema
+
+![Database Schema](docs/assets/db_schema.svg)
+
+<sub>Diagram generated with [dbdiagram.io](https://dbdiagram.io/)</sub>
+
 ## Orchestration
 
 The pipeline uses Prefect to manage data flows with built-in support for:

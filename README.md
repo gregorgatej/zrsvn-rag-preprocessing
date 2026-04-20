@@ -24,7 +24,7 @@ The system implements a four-phase pipeline for preprocessing PDF documents:
 ## Technical requirements  
   
 - Python 3.8+
-- PostgreSQL database with the `rag_najdbe` schema
+- PostgreSQL database with the database schema visible down below
 - MinIO/S3 storage
 - Ideally a CUDA-compatible GPU (for faster embedding generation)
 - Azure OpenAI API access
@@ -51,7 +51,7 @@ AZURE_OPENAI_API_KEY=your_azure_openai_key
 AZURE_OPENAI_ENDPOINT=your_azure_endpoint
 ```
 
-4. Prepare the PostgreSQL database with the rag_najdbe schema.
+4. Prepare the PostgreSQL database with the schema visible down below.
 
 ## Usage
 
